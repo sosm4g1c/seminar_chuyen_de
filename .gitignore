@@ -1,0 +1,11 @@
+# Ignore model files
+*.pt
+*.bin
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+.env/
