@@ -212,8 +212,6 @@ with tab1:
             insert_record(user_input, label)
             st.info("Đã lưu kết quả vào cơ sở dữ liệu!")
            
-
-
 # 2: huan luyen AI
 with tab2:
     st.write("Tải lên file CSV để huấn luyện model:")
