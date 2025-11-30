@@ -1,17 +1,14 @@
-# model.py
+
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, get_linear_schedule_with_warmup
 from torch.optim import AdamW
-torch.autograd.set_detect_anomaly(True)
-torch.use_deterministic_algorithms(False)
 import pandas as pd
 import os
 
-# =========================
-# Cấu hình
-# =========================
+
+# Cau hinh mo hinh va tham so
 MODEL_NAME = "vinai/phobert-base-v2"
 NUM_LABELS = 3
 BATCH_SIZE = 16
@@ -20,10 +17,11 @@ LEARNING_RATE = 2e-5
 MAX_LEN = 128
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MODEL_SAVE_PATH = "phobert_sentiment_model.pt"
+ENCODER_SAVE_PATH = "label_encoder.json"
+labels_name = ["negative", "neutral", "positive"]
 
-# =========================
-# Dataset
-# =========================
+
+# Dataset tùy chỉnh để chuẩn bị dữ liệu cho mô hình
 class SentimentDataset(Dataset):
     def __init__(self, texts, labels, tokenizer, max_len=128):
         self.texts = texts
@@ -50,86 +48,152 @@ class SentimentDataset(Dataset):
             "labels": torch.tensor(label, dtype=torch.long)
         }
 
-# =========================
-# Load tokenizer & model
-# =========================
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME, num_labels=NUM_LABELS)
-model.to(DEVICE)
 
-labels_name = ["negative", "neutral", "positive"]
 
-# =========================
-# Dự đoán
-# =========================
+def load_model():
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    # Load model đúng cách, KHÔNG dùng .to() → tránh lỗi meta tensor
+    model = AutoModelForSequenceClassification.from_pretrained(
+        MODEL_NAME,
+        num_labels=NUM_LABELS,
+        device_map={"": DEVICE},  # đặt toàn bộ model vào đúng device
+        torch_dtype="auto"
+    )
+
+    # Nếu có model đã fine-tune → load
+    if os.path.exists(MODEL_SAVE_PATH):
+        state = torch.load(MODEL_SAVE_PATH, map_location=DEVICE)
+        model.load_state_dict(state)
+
+    model.eval()
+    return tokenizer, model
+
+tokenizer, model = load_model()
+
+
+
+# # Hàm dự đoán cảm xúc cho một đoạn văn bản
 def predict_sentiment(text):
     model.eval()
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=MAX_LEN)
-    inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+    inputs = tokenizer(
+        text,
+        return_tensors="pt",
+        truncation=True,
+        padding=True,
+        max_length=MAX_LEN
+    ).to(DEVICE)
+
     with torch.no_grad():
         outputs = model(**inputs)
         probs = F.softmax(outputs.logits, dim=-1)
-        pred_id = torch.argmax(probs).item()
+        pred_id = torch.argmax(probs, dim=-1).item()
+
     return labels_name[pred_id], probs[0].tolist()
 
-# =========================
-# Huấn luyện model
-# =========================
+
+# Hàm huấn luyện mô hình cảm xúc từ file CSV
+
 def train_model(csv_file):
-    model.train()
-    model.zero_grad(set_to_none=True)
-    # Load dữ liệu
-    df = pd.read_csv(csv_file)
-    df = df.dropna(subset=["text", "label"])
-    df["text"] = df["text"].astype(str).str.strip()
-    df["label"] = df["label"].astype(str).str.strip().str.lower()
-    df = df[df["label"].isin(labels_name)]
-    
-    # Mã hóa nhãn
+    # Đọc, làm sạch và lọc dữ liệu hợp lệ
     from sklearn.preprocessing import LabelEncoder
+    from sklearn.model_selection import train_test_split
+
+    df = pd.read_csv(csv_file).dropna(subset=["text", "label"])
+    df["text"] = df["text"].astype(str).str.strip()
+    df["label"] = df["label"].str.lower().str.strip()
+
+    df = df[df["label"].isin(labels_name)]
+
+    # Chuyển nhãn text -> số
     encoder = LabelEncoder()
     df["label_id"] = encoder.fit_transform(df["label"])
-    
-    from sklearn.model_selection import train_test_split
+
+ 
+    import json
+    with open(ENCODER_SAVE_PATH, "w", encoding="utf8") as f:
+        json.dump(encoder.classes_.tolist(), f, ensure_ascii=False)
+
+    # Chia dữ liệu train/val (stratify để giữ tỉ lệ nhãn)
     X_train, X_val, y_train, y_val = train_test_split(
-        df["text"], df["label_id"], test_size=0.2, stratify=df["label_id"], random_state=42
+        df["text"],
+        df["label_id"],
+        test_size=0.2,
+        stratify=df["label_id"],
+        random_state=42
+    )
+    # Chuẩn bị batch dữ liệu cho train và validation
+    train_loader = DataLoader(
+        SentimentDataset(X_train.tolist(), y_train.tolist(), tokenizer),
+        batch_size=BATCH_SIZE,
+        shuffle=True
     )
 
-    train_dataset = SentimentDataset(X_train.tolist(), y_train.tolist(), tokenizer, MAX_LEN)
-    val_dataset = SentimentDataset(X_val.tolist(), y_val.tolist(), tokenizer, MAX_LEN)
+    val_loader = DataLoader(
+        SentimentDataset(X_val.tolist(), y_val.tolist(), tokenizer),
+        batch_size=BATCH_SIZE
+    )
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE)
+      # Load PhoBERT để train 
+    train_model_ft = AutoModelForSequenceClassification.from_pretrained(
+        MODEL_NAME,
+        num_labels=NUM_LABELS
+    ).to(DEVICE)
 
-    optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
+    # Optimizer và Scheduler cho mô hình Transformer
+    optimizer = AdamW(train_model_ft.parameters(), lr=LEARNING_RATE)
+    total_steps = len(train_loader) * EPOCHS
+    scheduler = get_linear_schedule_with_warmup(optimizer, 0, total_steps)
 
-    # Huấn luyện
+    # Training
+    best_val_loss = float("inf")
+
     for epoch in range(EPOCHS):
-        model.train()
+        train_model_ft.train()
         total_loss = 0
+
         for batch in train_loader:
-            optimizer.zero_grad(set_to_none=True)
-            input_ids = batch["input_ids"].to(DEVICE)
-            attention_mask = batch["attention_mask"].to(DEVICE)
-            labels = batch["labels"].to(DEVICE)
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+            optimizer.zero_grad()
+            batch = {k: v.to(DEVICE) for k, v in batch.items()}
+            outputs = train_model_ft(**batch)
             loss = outputs.loss
+
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
-        avg_loss = total_loss / len(train_loader)
-        print(f"Epoch {epoch+1}/{EPOCHS} - Train loss: {avg_loss:.4f}")
-    
-    # Lưu model
-    torch.save(model.state_dict(), MODEL_SAVE_PATH)
-    print(f"Đã lưu model vào {MODEL_SAVE_PATH}")
+            scheduler.step()
 
-# =========================
+            total_loss += loss.item()
+
+        avg_train_loss = total_loss / len(train_loader)
+
+        #VALIDATION
+        train_model_ft.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for batch in val_loader:
+                batch = {k: v.to(DEVICE) for k, v in batch.items()}
+                outputs = train_model_ft(**batch)
+                val_loss += outputs.loss.item()
+
+        avg_val_loss = val_loss / len(val_loader)
+
+        print(f"Epoch {epoch+1}/{EPOCHS} — Train Loss: {avg_train_loss:.4f} — Val Loss: {avg_val_loss:.4f}")
+
+        # Lưu model tốt nhất dựa trên val_loss
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save(train_model_ft.state_dict(), MODEL_SAVE_PATH)
+            print("Đã lưu model tốt nhất")
+
+    print("Huấn luyện hoàn thành")
+
+
+
+
 # Load model đã train
-# =========================
 def load_trained_model():
     if os.path.exists(MODEL_SAVE_PATH):
-        model.load_state_dict(torch.load(MODEL_SAVE_PATH, map_location=DEVICE))
+        state = torch.load(MODEL_SAVE_PATH, map_location=DEVICE)
+        model.load_state_dict(state)
         model.eval()
         print("Đã load model đã huấn luyện")
     else:
