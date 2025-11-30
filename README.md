@@ -114,7 +114,60 @@ python data_train.py
 ---
 ### 2.4. Hướng dẫn sử dụng:
 #### Sau khi chạy ứng dụng thành công, truy cập theo đường dẫn đã được cấu hình, giao diện website ứng dụng hiển thị:
+<p align="center">
+  <img src="images/4.png" alt="Hình 1: Giao diện ứng dụng" width="500">
+  <br>
+  <sub><em>Hình 1: Giao diện ứng dụng</em></sub>
+</p>
 
+#### Ứng dụng có 3 chức năng: 
+* **Chức năng phân tích cảm xúc**: Phân tích cảm xúc cho dữ liệu đầu vào
+
+<p align="center">
+  <img src="images/4.png" alt="Hình 2: Giao diện chức năng phân tích cảm xúc" width="500">
+  <br>
+  <sub><em>Hình 2: Giao diện chức năng phân tích cảm xúc</em></sub>
+</p>
+
+#### Kết quả trả về: 
+1. Tích cực (Positive):
+<p align="center">
+  <img src="images/7.png" alt="Hình 3: Kết quả tích cực" width="500">
+  <br>
+  <sub><em>Hình 3: Kết quả tích cực</em></sub>
+</p>
+2. Bình Thường (Neutral):
+<p align="center">
+  <img src="images/8.png" alt="Hình 4: Kết quả bình thường" width="500">
+  <br>
+  <sub><em>Hình 4: Kết quả bình thường</em></sub>
+</p>
+3. Tiêu cực (Negative):
+<p align="center">
+  <img src="images/9.png" alt="Hình 5: Kết quả tiêu cực" width="500">
+  <br>
+  <sub><em>Hình 5: Kết quả tiêu cực</em></sub>
+</p>
+
+* **Chức năng huấn luyện cho mô hình**: Thực hiện huẩn luyện dữ liệu cho mô hình từ file dữ liệu CSV
+
+<p align="center">
+  <img src="images/5.png" alt="Hình 6: Giao diện chức năng huấn luyện cho mô hình" width="500">
+  <br>
+    <sub><em>Hình 6: Giao diện chức năng phân tích cảm xúc</em></sub>
+  <br>
+  <br>
+  <img src="images/6.png" alt="Hình 7: Giao diện hoàn thành chức năng huấn luyện cho mô hình" width="500">
+  <br>
+  <sub><em>Hình 7 : Giao diện hoàn thành chức năng huấn luyện cho mô hình</em></sub>
+</p>
+
+* **Chức năng lịch sử phân tích cảm xúc**: Hiển thị danh sách các câu đã được phân tích
+<p align="center">
+  <img src="images/10.png" alt="Hình 8: Danh sách các câu đã được phân tích" width="500">
+  <br>
+  <sub><em>Hình 8: Danh sách các câu đã được phân tích</em></sub>
+</p>
 
 
 
